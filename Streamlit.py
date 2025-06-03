@@ -108,13 +108,17 @@ st.title("📋 Attendance Tracker")
 # Load saved always-included names
 always_include = load_saved_names()
 
+# --- Labour List input and save (Standalone block) ---
 st.subheader("👥 Labour List")
+
+# Pre-fill text area with saved names
+names_str = "\n".join([f"{s}, {f}" for s, f in always_include])
 
 names_input = st.text_area(
     "Enter names (one per line) in the format: Surname, FirstName (Example: Smith, John)",
+    value=names_str,
     height=150
 )
-
 
 if st.button("💾 Save names"):
     # Parse input
@@ -125,7 +129,7 @@ if st.button("💾 Save names"):
             if surname and first_name:
                 new_names.append((surname, first_name))
     save_names_to_file(new_names)
-    st.success("Save Names!")
+    st.success("Names saved successfully!")
     always_include = new_names  # update current list in app
 
 # --- Weekly attendance Excel upload ---
@@ -201,6 +205,7 @@ if uploaded_pdfs:
         )
 else:
     st.info("Upload PDFs to process weekly attendance.")
+
 
 
 
