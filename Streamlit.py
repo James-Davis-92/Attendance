@@ -103,15 +103,15 @@ def save_names_to_file(names_list):
 
 # --- Streamlit UI ---
 
-st.title("📋 Unauthorised Absence Tracker")
+st.title("📋 Attendance Tracker")
 
 # Load saved always-included names
 always_include = load_saved_names()
 
-st.subheader("👥 Add always-included names")
+st.subheader("👥 Labour List")
 
 names_input = st.text_area(
-    "Enter names (one per line) in the format: Surname, FirstName\nExample:\nSmith, John\nDoe, Jane",
+    "Enter names (one per line) in the format: Surname, FirstName (Example: Smith, John)",
     height=100,
     value="\n".join(f"{s}, {f}" for s, f in always_include)
 )
@@ -125,7 +125,7 @@ if st.button("💾 Save always-included names"):
             if surname and first_name:
                 new_names.append((surname, first_name))
     save_names_to_file(new_names)
-    st.success("Always-included names saved!")
+    st.success("Save Names!")
     always_include = new_names  # update current list in app
 
 # --- Weekly attendance Excel upload ---
