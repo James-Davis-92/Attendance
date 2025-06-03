@@ -5,9 +5,11 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from io import BytesIO
 from openpyxl.styles import PatternFill, Alignment
+import os
 
 # Constants
 days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+NAMES_STORAGE_FILE = "always_included_names.txt"
 
 # --- Functions ---
 
@@ -81,35 +83,58 @@ def style_excel(df):
 
         return output.getvalue()
 
+def load_saved_names():
+    if os.path.exists(NAMES_STORAGE_FILE):
+        with open(NAMES_STORAGE_FILE, "r") as f:
+            lines = f.read().strip().splitlines()
+        saved = []
+        for line in lines:
+            if ',' in line:
+                surname, first_name = map(str.strip, line.split(',', 1))
+                if surname and first_name:
+                    saved.append((surname, first_name))
+        return saved
+    return []
+
+def save_names_to_file(names_list):
+    with open(NAMES_STORAGE_FILE, "w") as f:
+        for surname, first_name in names_list:
+            f.write(f"{surname}, {first_name}\n")
+
 # --- Streamlit UI ---
 
 st.title("📋 Unauthorised Absence Tracker")
 
-# Always included names input (unchanged)
+# Load saved always-included names
+always_include = load_saved_names()
+
 st.subheader("👥 Add always-included names")
+
 names_input = st.text_area(
     "Enter names (one per line) in the format: Surname, FirstName\nExample:\nSmith, John\nDoe, Jane",
-    height=100
+    height=100,
+    value="\n".join(f"{s}, {f}" for s, f in always_include)
 )
 
-always_include = []
-if names_input:
+if st.button("💾 Save always-included names"):
+    # Parse input
+    new_names = []
     for line in names_input.splitlines():
         if ',' in line:
             surname, first_name = map(str.strip, line.split(',', 1))
             if surname and first_name:
-                always_include.append((surname, first_name))
+                new_names.append((surname, first_name))
+    save_names_to_file(new_names)
+    st.success("Always-included names saved!")
+    always_include = new_names  # update current list in app
 
-# --- New: Upload existing weekly attendance Excel ---
+# --- Weekly attendance Excel upload ---
+
 uploaded_excel = st.file_uploader(
     "Upload existing weekly attendance Excel file (optional)",
     type=['xlsx']
 )
 
-# Initialize a dictionary to store all attendance across weeks if needed
-weeks = defaultdict(list)
-
-# If you want to process multiple PDFs per week as before, add your upload widget here
 uploaded_pdfs = st.file_uploader(
     "Upload attendance PDF(s) for the week",
     type=["pdf"],
@@ -117,7 +142,7 @@ uploaded_pdfs = st.file_uploader(
 )
 
 if uploaded_pdfs:
-    # Group PDFs by week based on filename date
+    weeks = defaultdict(list)
     for file in uploaded_pdfs:
         date = extract_date_from_filename(file.name)
         if date:
@@ -130,17 +155,13 @@ if uploaded_pdfs:
     for week_key, files in weeks.items():
         st.subheader(f"📅 Week {week_key}")
 
-        # If Excel uploaded, load it, else create new DataFrame
         if uploaded_excel:
-            # Load Excel into df_existing for this week
             df_existing = pd.read_excel(uploaded_excel)
             st.write("Loaded existing attendance data:")
             st.dataframe(df_existing)
         else:
-            # Start fresh
             all_attendance = defaultdict(lambda: {day: 'A' for day in days})
 
-            # Process PDFs for this week
             for file, _ in files:
                 attendance_for_day = process_pdf(file)
                 for (surname, first_name), (day_str, flag) in attendance_for_day.items():
@@ -152,7 +173,6 @@ if uploaded_pdfs:
                 if name_tuple not in all_attendance:
                     all_attendance[name_tuple] = {day: 'A' for day in days}
 
-            # Prepare DataFrame rows
             rows = []
             for (surname, first_name), day_flags in all_attendance.items():
                 row = [surname, first_name] + [day_flags[day] for day in days]
@@ -161,7 +181,6 @@ if uploaded_pdfs:
             df_existing = pd.DataFrame(rows, columns=['Surname', 'FirstName'] + days)
             df_existing = df_existing.sort_values(by=['Surname', 'FirstName']).reset_index(drop=True)
 
-        # Rename day columns to include date headers for display
         year, week_num = map(int, week_key.split('-W'))
         monday_date = datetime.strptime(f"{year} {week_num} 1", "%G %V %u")
         day_headers = []
@@ -173,7 +192,6 @@ if uploaded_pdfs:
 
         st.dataframe(df_display)
 
-        # Download updated Excel button with styling
         excel_bytes = style_excel(df_existing)
         st.download_button(
             label=f"⬇️ Download updated Excel for week {week_key}",
@@ -181,7 +199,6 @@ if uploaded_pdfs:
             file_name=f"attendance_{week_key}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
 else:
     st.info("Upload PDFs to process weekly attendance.")
 
