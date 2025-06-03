@@ -11,25 +11,11 @@ from openpyxl.styles import PatternFill, Alignment
 data_folder = r"C:\Users\james\PycharmProjects\GBEservices\.venv\Attendance_Records"
 os.makedirs(data_folder, exist_ok=True)
 
-# 📂 File to persist names
-NAMES_FILE = os.path.join(data_folder, "names_list.txt")
-
-# 📖 Load saved names from file
-def load_names():
-    if not os.path.exists(NAMES_FILE):
-        return []
-    with open(NAMES_FILE, "r") as f:
-        lines = f.read().splitlines()
-        return [tuple(line.split(",", 1)) for line in lines if ',' in line]
-
-# 💾 Save names to file
-def save_names(names_list):
-    with open(NAMES_FILE, "w") as f:
-        for surname, first_name in names_list:
-            f.write(f"{surname},{first_name}\n")
+names_file = os.path.join(data_folder, "always_include_names.txt")
 
 days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 
+# 📊 Group words by row tolerance
 def group_words_to_rows(words, tolerance=3):
     rows, current_row, last_top = [], [], None
     for w in words:
@@ -44,6 +30,7 @@ def group_words_to_rows(words, tolerance=3):
         rows.append(current_row)
     return rows
 
+# 📊 Extract table data from PDF
 def extract_table_from_pdf(pdf_file):
     with pdfplumber.open(pdf_file) as pdf:
         page = pdf.pages[0]
@@ -51,6 +38,7 @@ def extract_table_from_pdf(pdf_file):
         rows = group_words_to_rows(words)
         return [[w['text'] for w in sorted(row, key=lambda w: w['x0'])] for row in rows]
 
+# 🎛️ Process PDF for attendance
 def process_pdf(pdf_file):
     table = extract_table_from_pdf(pdf_file)
     filtered = [row for row in table if len(row) == 12 and row[0] == 'IMSL']
@@ -63,6 +51,7 @@ def process_pdf(pdf_file):
         attendance[(surname, first_name)] = (day_str, flag)
     return attendance
 
+# 📆 Extract date from filename
 def extract_date_from_filename(filename):
     name, _ = os.path.splitext(os.path.basename(filename))
     for sep in ['_', '.']:
@@ -74,6 +63,7 @@ def extract_date_from_filename(filename):
                 continue
     return None
 
+# 📈 Format and save Excel with coloring
 def style_and_save(df, week_key, day_headers):
     filename = os.path.join(data_folder, f"attendance_{week_key}.xlsx")
     df.to_excel(filename, index=False)
@@ -81,9 +71,9 @@ def style_and_save(df, week_key, day_headers):
     ws = wb.active
 
     fill_map = {
-        'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),
-        'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),
-        'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),
+        'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),  # Green
+        'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),  # Yellow
+        'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),  # Red
     }
     center_align = Alignment(horizontal='center', vertical='center')
 
@@ -103,36 +93,37 @@ def style_and_save(df, week_key, day_headers):
 # 📄 Streamlit Interface
 st.title("📋 Unauthorised Absence Tracker")
 
-# Load saved names on startup
-saved_names = load_names()
-default_names_text = "\n".join([f"{surname}, {first_name}" for surname, first_name in saved_names])
+# --- Load always-included names from disk ---
+always_include = []
+if os.path.exists(names_file):
+    with open(names_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if ',' in line:
+                surname, first_name = map(str.strip, line.split(',', 1))
+                if surname and first_name:
+                    always_include.append((surname, first_name))
 
 st.subheader("👥 Add always-included names")
 names_input = st.text_area(
     "Enter names (one per line) in the format: Surname, FirstName\nExample:\nSmith, John\nDoe, Jane",
-    value=default_names_text,
-    height=120
+    value="\n".join(f"{s}, {f}" for s, f in always_include),
+    height=100
 )
 
-# Save button to persist names
-if st.button("💾 Save Names"):
-    always_include = []
+if st.button("💾 Save names"):
+    # Save input names to file
+    lines_to_save = []
     for line in names_input.splitlines():
         if ',' in line:
             surname, first_name = map(str.strip, line.split(',', 1))
             if surname and first_name:
-                always_include.append((surname, first_name))
-    save_names(always_include)
-    st.success("✅ Names saved successfully. You can now re-run the app and they’ll stay.")
+                lines_to_save.append(f"{surname}, {first_name}")
+    with open(names_file, "w") as f:
+        f.write("\n".join(lines_to_save))
+    st.success("Names saved!")
 
-# Load names to use in processing
-always_include = []
-for line in names_input.splitlines():
-    if ',' in line:
-        surname, first_name = map(str.strip, line.split(',', 1))
-        if surname and first_name:
-            always_include.append((surname, first_name))
-
+# File uploader
 uploaded_files = st.file_uploader("Upload attendance PDF(s)", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
@@ -150,41 +141,63 @@ if uploaded_files:
 
     for week_key, files in weeks.items():
         st.subheader(f"📅 Week {week_key}")
-        all_attendance = defaultdict(lambda: {day: 'A' for day in days})
+
+        filename = os.path.join(data_folder, f"attendance_{week_key}.xlsx")
+
+        # Calculate Monday date and day headers for the week
         year, week_str = map(int, week_key.split('-W'))
         monday_date = datetime.strptime(f"{year} {week_str} 1", "%G %V %u")
+        day_headers = [f"{day} {(monday_date + timedelta(days=i)).strftime('%d/%m/%Y')}" for i, day in enumerate(days)]
 
-        day_headers = []
-        for i, day_abbr in enumerate(days):
-            current_date = monday_date + timedelta(days=i)
-            day_headers.append(f"{day_abbr} {current_date.strftime('%d/%m/%Y')}")
+        # Load existing Excel file for the week if exists
+        if os.path.exists(filename):
+            df = pd.read_excel(filename)
+            # Rename headers back to short day names for internal use
+            col_rename_back = {header: day for day, header in zip(days, day_headers)}
+            df.rename(columns=col_rename_back, inplace=True)
+        else:
+            df = pd.DataFrame(columns=['Surname', 'FirstName'] + days)
 
+        # Convert dataframe to dict for easy updating
+        attendance_dict = {}
+        for idx, row in df.iterrows():
+            key = (row['Surname'], row['FirstName'])
+            attendance_dict[key] = {day: row[day] if day in row else 'A' for day in days}
+
+        # Update attendance from newly uploaded PDFs
         for file, _ in files:
             attendance_for_day = process_pdf(file)
             for (surname, first_name), (day_str, flag) in attendance_for_day.items():
                 if day_str in days:
-                    all_attendance[(surname, first_name)][day_str] = flag
+                    if (surname, first_name) not in attendance_dict:
+                        attendance_dict[(surname, first_name)] = {day: 'A' for day in days}
+                    attendance_dict[(surname, first_name)][day_str] = flag
 
+        # Add always-included names if missing
         for name_tuple in always_include:
-            if name_tuple not in all_attendance:
-                all_attendance[name_tuple] = {day: 'A' for day in days}
+            if name_tuple not in attendance_dict:
+                attendance_dict[name_tuple] = {day: 'A' for day in days}
 
+        # Prepare rows for dataframe from updated dict
         rows = []
-        for (surname, first_name), day_flags in all_attendance.items():
+        for (surname, first_name), day_flags in attendance_dict.items():
             row = [surname, first_name] + [day_flags[day] for day in days]
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=['Surname', 'FirstName'] + days)
         df = df.sort_values(by=['Surname', 'FirstName']).reset_index(drop=True)
+
+        # Rename columns to include date for display/save
         rename_map = {day: header for day, header in zip(days, day_headers)}
         df.rename(columns=rename_map, inplace=True)
 
         st.dataframe(df)
 
-        filename = style_and_save(df, week_key, day_headers)
+        # Save the updated styled Excel file
+        saved_filename = style_and_save(df, week_key, day_headers)
         st.success(f"✅ Updated attendance for week {week_key}.")
-        with open(filename, "rb") as f:
-            st.download_button("⬇️ Download updated Excel", f, file_name=os.path.basename(filename))
+        with open(saved_filename, "rb") as f:
+            st.download_button("⬇️ Download updated Excel", f, file_name=os.path.basename(saved_filename))
 
     st.info("Done processing all files.")
 
