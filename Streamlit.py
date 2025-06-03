@@ -111,10 +111,10 @@ always_include = load_saved_names()
 st.subheader("👥 Labour List")
 
 names_input = st.text_area(
-    "Enter names (one per line) in the format: Surname, FirstName (Example: Smith, John)",
-    height=100,
-    value="\n".join(f"{s}, {f}" for s, f in always_include)
+    "Enter names (one per line) in the format: Surname, FirstName (Example: Smith, John),
+    height=150
 )
+
 
 if st.button("💾 Save always-included names"):
     # Parse input
