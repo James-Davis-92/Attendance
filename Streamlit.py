@@ -108,10 +108,9 @@ st.title("📋 Attendance Tracker")
 # Load saved always-included names
 always_include = load_saved_names()
 
-# --- Labour List input and save (Standalone block) ---
+# --- Labour List input and save ---
 st.subheader("👥 Labour List")
 
-# Pre-fill text area with saved names
 names_str = "\n".join([f"{s}, {f}" for s, f in always_include])
 
 names_input = st.text_area(
@@ -121,7 +120,6 @@ names_input = st.text_area(
 )
 
 if st.button("💾 Save names"):
-    # Parse input
     new_names = []
     for line in names_input.splitlines():
         if ',' in line:
@@ -130,7 +128,7 @@ if st.button("💾 Save names"):
                 new_names.append((surname, first_name))
     save_names_to_file(new_names)
     st.success("Names saved successfully!")
-    always_include = new_names  # update current list in app
+    always_include = new_names
 
 # --- Weekly attendance Excel upload ---
 
@@ -172,7 +170,6 @@ if uploaded_pdfs:
                     if day_str in days:
                         all_attendance[(surname, first_name)][day_str] = flag
 
-            # Add always-included names with all 'A' if missing
             for name_tuple in always_include:
                 if name_tuple not in all_attendance:
                     all_attendance[name_tuple] = {day: 'A' for day in days}
@@ -185,16 +182,13 @@ if uploaded_pdfs:
             df_existing = pd.DataFrame(rows, columns=['Surname', 'FirstName'] + days)
             df_existing = df_existing.sort_values(by=['Surname', 'FirstName']).reset_index(drop=True)
 
-        # Create weekday + date headers for display AND export
+        # Create weekday + date headers
         year, week_num = map(int, week_key.split('-W'))
         monday_date = datetime.strptime(f"{year} {week_num} 1", "%G %V %u")
-        day_headers = []
-        for i, day_abbr in enumerate(days):
-            current_date = monday_date + timedelta(days=i)
-            day_headers.append(f"{day_abbr} {current_date.strftime('%d/%m/%Y')}")
-        rename_map = {day: header for day, header in zip(days, day_headers)}
+        day_headers = [f"{day} { (monday_date + timedelta(days=i)).strftime('%d/%m/%Y') }" for i, day in enumerate(days)]
 
-        df_renamed = df_existing.rename(columns=rename_map)
+        df_existing.columns = ['Surname', 'FirstName'] + day_headers
+        df_renamed = df_existing
 
         st.dataframe(df_renamed)
 
@@ -207,10 +201,6 @@ if uploaded_pdfs:
         )
 else:
     st.info("Upload PDFs to process weekly attendance.")
-
-
-
-
 
 
 
