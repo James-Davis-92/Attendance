@@ -11,12 +11,25 @@ from openpyxl.styles import PatternFill, Alignment
 data_folder = r"C:\Users\james\PycharmProjects\GBEservices\.venv\Attendance_Records"
 os.makedirs(data_folder, exist_ok=True)
 
-# 📄 Names file location
+# 📂 File to persist names
 NAMES_FILE = os.path.join(data_folder, "names_list.txt")
+
+# 📖 Load saved names from file
+def load_names():
+    if not os.path.exists(NAMES_FILE):
+        return []
+    with open(NAMES_FILE, "r") as f:
+        lines = f.read().splitlines()
+        return [tuple(line.split(",", 1)) for line in lines if ',' in line]
+
+# 💾 Save names to file
+def save_names(names_list):
+    with open(NAMES_FILE, "w") as f:
+        for surname, first_name in names_list:
+            f.write(f"{surname},{first_name}\n")
 
 days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 
-# 📊 Group words by row tolerance
 def group_words_to_rows(words, tolerance=3):
     rows, current_row, last_top = [], [], None
     for w in words:
@@ -31,7 +44,6 @@ def group_words_to_rows(words, tolerance=3):
         rows.append(current_row)
     return rows
 
-# 📊 Extract table data from PDF
 def extract_table_from_pdf(pdf_file):
     with pdfplumber.open(pdf_file) as pdf:
         page = pdf.pages[0]
@@ -39,7 +51,6 @@ def extract_table_from_pdf(pdf_file):
         rows = group_words_to_rows(words)
         return [[w['text'] for w in sorted(row, key=lambda w: w['x0'])] for row in rows]
 
-# 🎛️ Process PDF for attendance
 def process_pdf(pdf_file):
     table = extract_table_from_pdf(pdf_file)
     filtered = [row for row in table if len(row) == 12 and row[0] == 'IMSL']
@@ -52,7 +63,6 @@ def process_pdf(pdf_file):
         attendance[(surname, first_name)] = (day_str, flag)
     return attendance
 
-# 📆 Extract date from filename
 def extract_date_from_filename(filename):
     name, _ = os.path.splitext(os.path.basename(filename))
     for sep in ['_', '.']:
@@ -64,7 +74,6 @@ def extract_date_from_filename(filename):
                 continue
     return None
 
-# 📈 Format and save Excel with coloring
 def style_and_save(df, week_key, day_headers):
     filename = os.path.join(data_folder, f"attendance_{week_key}.xlsx")
     df.to_excel(filename, index=False)
@@ -72,9 +81,9 @@ def style_and_save(df, week_key, day_headers):
     ws = wb.active
 
     fill_map = {
-        'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),  # Green
-        'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),  # Yellow
-        'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),  # Red
+        'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),
+        'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),
+        'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),
     }
     center_align = Alignment(horizontal='center', vertical='center')
 
@@ -91,46 +100,38 @@ def style_and_save(df, week_key, day_headers):
     wb.save(filename)
     return filename
 
-# 📋 Load and save always-included names
-def load_names():
-    if not os.path.exists(NAMES_FILE):
-        return []
-    with open(NAMES_FILE, "r") as f:
-        lines = f.read().splitlines()
-        return [tuple(line.split(",", 1)) for line in lines if ',' in line]
-
-def save_names(names_list):
-    with open(NAMES_FILE, "w") as f:
-        for surname, first_name in names_list:
-            f.write(f"{surname},{first_name}\n")
-
 # 📄 Streamlit Interface
 st.title("📋 Unauthorised Absence Tracker")
 
-# --- Load existing names ---
+# Load saved names on startup
 saved_names = load_names()
+default_names_text = "\n".join([f"{surname}, {first_name}" for surname, first_name in saved_names])
 
-st.subheader("👥 Always-included names")
-existing_names_display = "\n".join(f"{s}, {f}" for s, f in saved_names)
+st.subheader("👥 Add always-included names")
 names_input = st.text_area(
-    "Edit names (one per line) in the format: Surname, FirstName",
-    value=existing_names_display,
-    height=150
+    "Enter names (one per line) in the format: Surname, FirstName\nExample:\nSmith, John\nDoe, Jane",
+    value=default_names_text,
+    height=120
 )
 
+# Save button to persist names
 if st.button("💾 Save Names"):
-    updated_names = []
+    always_include = []
     for line in names_input.splitlines():
         if ',' in line:
-            surname, first_name = map(str.strip, line.split(",", 1))
+            surname, first_name = map(str.strip, line.split(',', 1))
             if surname and first_name:
-                updated_names.append((surname, first_name))
-    save_names(updated_names)
-    st.success("Names saved successfully!")
-    st.experimental_rerun()
+                always_include.append((surname, first_name))
+    save_names(always_include)
+    st.success("✅ Names saved successfully. You can now re-run the app and they’ll stay.")
 
-# Load names again after possible update
-always_include = load_names()
+# Load names to use in processing
+always_include = []
+for line in names_input.splitlines():
+    if ',' in line:
+        surname, first_name = map(str.strip, line.split(',', 1))
+        if surname and first_name:
+            always_include.append((surname, first_name))
 
 uploaded_files = st.file_uploader("Upload attendance PDF(s)", type=["pdf"], accept_multiple_files=True)
 
@@ -158,19 +159,16 @@ if uploaded_files:
             current_date = monday_date + timedelta(days=i)
             day_headers.append(f"{day_abbr} {current_date.strftime('%d/%m/%Y')}")
 
-        # Process PDFs for the week
         for file, _ in files:
             attendance_for_day = process_pdf(file)
             for (surname, first_name), (day_str, flag) in attendance_for_day.items():
                 if day_str in days:
                     all_attendance[(surname, first_name)][day_str] = flag
 
-        # Add always-included names with all 'A' if missing
         for name_tuple in always_include:
             if name_tuple not in all_attendance:
                 all_attendance[name_tuple] = {day: 'A' for day in days}
 
-        # Prepare DataFrame rows
         rows = []
         for (surname, first_name), day_flags in all_attendance.items():
             row = [surname, first_name] + [day_flags[day] for day in days]
