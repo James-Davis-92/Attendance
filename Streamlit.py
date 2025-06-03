@@ -116,7 +116,7 @@ names_input = st.text_area(
 )
 
 
-if st.button("💾 Save always-included names"):
+if st.button("💾 Save names"):
     # Parse input
     new_names = []
     for line in names_input.splitlines():
