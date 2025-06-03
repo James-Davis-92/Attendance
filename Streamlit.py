@@ -11,6 +11,9 @@ from openpyxl.styles import PatternFill, Alignment
 data_folder = r"C:\Users\james\PycharmProjects\GBEservices\.venv\Attendance_Records"
 os.makedirs(data_folder, exist_ok=True)
 
+# 📄 Names file location
+NAMES_FILE = os.path.join(data_folder, "names_list.txt")
+
 days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 
 # 📊 Group words by row tolerance
@@ -88,23 +91,46 @@ def style_and_save(df, week_key, day_headers):
     wb.save(filename)
     return filename
 
+# 📋 Load and save always-included names
+def load_names():
+    if not os.path.exists(NAMES_FILE):
+        return []
+    with open(NAMES_FILE, "r") as f:
+        lines = f.read().splitlines()
+        return [tuple(line.split(",", 1)) for line in lines if ',' in line]
+
+def save_names(names_list):
+    with open(NAMES_FILE, "w") as f:
+        for surname, first_name in names_list:
+            f.write(f"{surname},{first_name}\n")
+
 # 📄 Streamlit Interface
 st.title("📋 Unauthorised Absence Tracker")
 
-# --- New input: names to always include ---
-st.subheader("👥 Add always-included names")
+# --- Load existing names ---
+saved_names = load_names()
+
+st.subheader("👥 Always-included names")
+existing_names_display = "\n".join(f"{s}, {f}" for s, f in saved_names)
 names_input = st.text_area(
-    "Enter names (one per line) in the format: Surname, FirstName\nExample:\nSmith, John\nDoe, Jane",
-    height=100
+    "Edit names (one per line) in the format: Surname, FirstName",
+    value=existing_names_display,
+    height=150
 )
 
-always_include = []
-if names_input:
+if st.button("💾 Save Names"):
+    updated_names = []
     for line in names_input.splitlines():
         if ',' in line:
-            surname, first_name = map(str.strip, line.split(',', 1))
+            surname, first_name = map(str.strip, line.split(",", 1))
             if surname and first_name:
-                always_include.append((surname, first_name))
+                updated_names.append((surname, first_name))
+    save_names(updated_names)
+    st.success("Names saved successfully!")
+    st.experimental_rerun()
+
+# Load names again after possible update
+always_include = load_names()
 
 uploaded_files = st.file_uploader("Upload attendance PDF(s)", type=["pdf"], accept_multiple_files=True)
 
@@ -163,6 +189,7 @@ if uploaded_files:
             st.download_button("⬇️ Download updated Excel", f, file_name=os.path.basename(filename))
 
     st.info("Done processing all files.")
+
 
 
 
