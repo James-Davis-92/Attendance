@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from collections import defaultdict
 import os
+import json
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Alignment
 
@@ -12,6 +13,8 @@ data_folder = r"C:\Users\james\PycharmProjects\GBEservices\.venv\Attendance_Reco
 os.makedirs(data_folder, exist_ok=True)
 
 days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+
+names_file = os.path.join(data_folder, "always_included.json")
 
 # 📊 Group words by row tolerance
 def group_words_to_rows(words, tolerance=3):
@@ -61,17 +64,16 @@ def extract_date_from_filename(filename):
                 continue
     return None
 
-# 📈 Format and save Excel with coloring
+# 📈 Format and save Excel
 def style_and_save(df, week_key, day_headers):
     filename = os.path.join(data_folder, f"attendance_{week_key}.xlsx")
     df.to_excel(filename, index=False)
-    wb = load_workbook(filename)
-    ws = wb.active
+    wb, ws = load_workbook(filename), load_workbook(filename).active
 
     fill_map = {
-        'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),  # Green
-        'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),  # Yellow
-        'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),  # Red
+        'Y': PatternFill(start_color='00FF00', end_color='00FF00', fill_type='solid'),
+        'L': PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid'),
+        'A': PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid'),
     }
     center_align = Alignment(horizontal='center', vertical='center')
 
@@ -88,24 +90,51 @@ def style_and_save(df, week_key, day_headers):
     wb.save(filename)
     return filename
 
+# 📑 Load and save always-included names
+def load_always_included_names():
+    if os.path.exists(names_file):
+        with open(names_file, "r") as f:
+            return json.load(f)
+    return []
+
+def save_always_included_names(names):
+    with open(names_file, "w") as f:
+        json.dump(names, f)
+
 # 📄 Streamlit Interface
 st.title("📋 Unauthorised Absence Tracker")
 
-# --- New input: names to always include ---
+# Always-included names management
 st.subheader("👥 Add always-included names")
-names_input = st.text_area(
-    "Enter names (one per line) in the format: Surname, FirstName\nExample:\nSmith, John\nDoe, Jane",
-    height=100
-)
 
-always_include = []
-if names_input:
-    for line in names_input.splitlines():
-        if ',' in line:
-            surname, first_name = map(str.strip, line.split(',', 1))
-            if surname and first_name:
-                always_include.append((surname, first_name))
+always_included = load_always_included_names()
 
+# Input fields
+new_surname = st.text_input("Surname")
+new_firstname = st.text_input("First Name")
+
+# Add button
+if st.button("➕ Add to always-included list"):
+    if new_surname and new_firstname:
+        always_included.append({"surname": new_surname, "first_name": new_firstname})
+        save_always_included_names(always_included)
+        st.success(f"Added {new_firstname} {new_surname}")
+    else:
+        st.warning("Please enter both a surname and first name.")
+
+# Display current list
+if always_included:
+    st.write("### 📋 Always-included names")
+    for i, person in enumerate(always_included):
+        col1, col2, col3 = st.columns([3, 3, 1])
+        col1.write(person['surname'])
+        col2.write(person['first_name'])
+        if col3.button("❌", key=f"delete_{i}"):
+            always_included.pop(i)
+            save_always_included_names(always_included)
+            st.experimental_rerun()
+
+# PDF Upload
 uploaded_files = st.file_uploader("Upload attendance PDF(s)", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
@@ -132,19 +161,18 @@ if uploaded_files:
             current_date = monday_date + timedelta(days=i)
             day_headers.append(f"{day_abbr} {current_date.strftime('%d/%m/%Y')}")
 
-        # Process PDFs for the week
         for file, _ in files:
             attendance_for_day = process_pdf(file)
             for (surname, first_name), (day_str, flag) in attendance_for_day.items():
                 if day_str in days:
                     all_attendance[(surname, first_name)][day_str] = flag
 
-        # Add always-included names with all 'A' if missing
-        for name_tuple in always_include:
-            if name_tuple not in all_attendance:
-                all_attendance[name_tuple] = {day: 'A' for day in days}
+        # Add always-included names if missing
+        for person in always_included:
+            key = (person['surname'], person['first_name'])
+            if key not in all_attendance:
+                all_attendance[key] = {day: 'A' for day in days}
 
-        # Prepare DataFrame rows
         rows = []
         for (surname, first_name), day_flags in all_attendance.items():
             row = [surname, first_name] + [day_flags[day] for day in days]
@@ -163,6 +191,7 @@ if uploaded_files:
             st.download_button("⬇️ Download updated Excel", f, file_name=os.path.basename(filename))
 
     st.info("Done processing all files.")
+
 
 
 
