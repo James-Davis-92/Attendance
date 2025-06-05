@@ -5,13 +5,45 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from io import BytesIO
 from openpyxl.styles import PatternFill, Alignment
-import os
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # Constants
 days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
-NAMES_STORAGE_FILE = "always_included_names.txt"
 
-# --- Functions ---
+# 🔴 EDIT HERE: Replace with your actual Google Sheet URL
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1Y8nSTQUZ5qWborDOlPxzh9K48Ls2Hpky4vf36Pej7d8/edit?usp=sharing"
+
+# --- Google Sheets functions ---
+
+def get_gsheet_client():
+    scope = ["https://spreadsheets.google.com/feeds",
+             "https://www.googleapis.com/auth/spreadsheets",
+             "https://www.googleapis.com/auth/drive"]
+
+    creds_dict = st.secrets["google"]  # uses your Streamlit Cloud secret
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client
+
+def load_saved_names_from_gs(sheet_url):
+    client = get_gsheet_client()
+    sheet = client.open_by_url(sheet_url)
+    worksheet = sheet.worksheet("names")
+    records = worksheet.get_all_records()
+    return [(row['Surname'], row['FirstName']) for row in records]
+
+def save_names_to_gs(sheet_url, names_list):
+    client = get_gsheet_client()
+    sheet = client.open_by_url(sheet_url)
+    worksheet = sheet.worksheet("names")
+    worksheet.clear()
+    worksheet.append_row(["Surname", "FirstName"])
+    for surname, first_name in names_list:
+        worksheet.append_row([surname, first_name])
+
+# --- PDF + Attendance functions ---
 
 def group_words_to_rows(words, tolerance=3):
     rows, current_row, last_top = [], [], None
@@ -47,7 +79,7 @@ def process_pdf(pdf_file):
     return attendance
 
 def extract_date_from_filename(filename):
-    name, _ = filename.rsplit('.', 1)[0], None
+    name, _ = filename.rsplit('.', 1)
     for sep in ['_', '.']:
         parts = name.split(sep)
         if len(parts) >= 3:
@@ -65,9 +97,9 @@ def style_excel(df):
             ws = wb.active
 
             fill_map = {
-                'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),  # Green
-                'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),  # Yellow
-                'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),  # Red
+                'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),
+                'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),
+                'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),
             }
             center_align = Alignment(horizontal='center', vertical='center')
 
@@ -83,30 +115,12 @@ def style_excel(df):
 
         return output.getvalue()
 
-def load_saved_names():
-    if os.path.exists(NAMES_STORAGE_FILE):
-        with open(NAMES_STORAGE_FILE, "r") as f:
-            lines = f.read().strip().splitlines()
-        saved = []
-        for line in lines:
-            if ',' in line:
-                surname, first_name = map(str.strip, line.split(',', 1))
-                if surname and first_name:
-                    saved.append((surname, first_name))
-        return saved
-    return []
-
-def save_names_to_file(names_list):
-    with open(NAMES_STORAGE_FILE, "w") as f:
-        for surname, first_name in names_list:
-            f.write(f"{surname}, {first_name}\n")
-
 # --- Streamlit UI ---
 
 st.title("📋 Attendance Tracker")
 
-# Load saved always-included names
-always_include = load_saved_names()
+# Load saved always-included names from Google Sheets
+always_include = load_saved_names_from_gs(SHEET_URL)
 
 # --- Labour List input and save ---
 st.subheader("👥 Labour List")
@@ -126,16 +140,12 @@ if st.button("💾 Save names"):
             surname, first_name = map(str.strip, line.split(',', 1))
             if surname and first_name:
                 new_names.append((surname, first_name))
-    save_names_to_file(new_names)
+    save_names_to_gs(SHEET_URL, new_names)
     st.success("Names saved successfully!")
     always_include = new_names
 
-# --- Weekly attendance Excel upload ---
-
-uploaded_excel = st.file_uploader(
-    "Upload existing weekly attendance Excel file (optional)",
-    type=['xlsx']
-)
+# --- Weekly attendance uploads ---
+uploaded_excel = st.file_uploader("Upload existing weekly attendance Excel file (optional)", type=['xlsx'])
 
 uploaded_pdfs = st.file_uploader(
     "Upload attendance PDF(s) for the week",
@@ -182,10 +192,9 @@ if uploaded_pdfs:
             df_existing = pd.DataFrame(rows, columns=['Surname', 'FirstName'] + days)
             df_existing = df_existing.sort_values(by=['Surname', 'FirstName']).reset_index(drop=True)
 
-        # Create weekday + date headers
         year, week_num = map(int, week_key.split('-W'))
         monday_date = datetime.strptime(f"{year} {week_num} 1", "%G %V %u")
-        day_headers = [f"{day} { (monday_date + timedelta(days=i)).strftime('%d/%m/%Y') }" for i, day in enumerate(days)]
+        day_headers = [f"{day} {(monday_date + timedelta(days=i)).strftime('%d/%m/%Y')}" for i, day in enumerate(days)]
 
         df_existing.columns = ['Surname', 'FirstName'] + day_headers
         df_renamed = df_existing
@@ -201,12 +210,3 @@ if uploaded_pdfs:
         )
 else:
     st.info("Upload PDFs to process weekly attendance.")
-
-
-
-
-
-
-
-
-
