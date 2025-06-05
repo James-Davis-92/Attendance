@@ -12,7 +12,7 @@ import json
 # Constants
 days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 
-# 🔴 EDIT HERE: Replace with your actual Google Sheet URL
+# Actual Google Sheet URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Y8nSTQUZ5qWborDOlPxzh9K48Ls2Hpky4vf36Pej7d8/edit?usp=sharing"
 
 # --- Google Sheets functions ---
@@ -103,11 +103,12 @@ def style_excel(df):
             }
             center_align = Alignment(horizontal='center', vertical='center')
 
-            for col_idx in range(3, 8):
+            # Adjust width for day columns (starting from 3rd column)
+            for col_idx in range(3, ws.max_column + 1):
                 ws.column_dimensions[chr(64 + col_idx)].width = 20
 
             for row in range(2, ws.max_row + 1):
-                for col_idx in range(3, 8):
+                for col_idx in range(3, ws.max_column + 1):
                     cell = ws.cell(row=row, column=col_idx)
                     if cell.value in fill_map:
                         cell.fill = fill_map[cell.value]
@@ -167,11 +168,49 @@ if uploaded_pdfs:
     for week_key, files in weeks.items():
         st.subheader(f"📅 Week {week_key}")
 
+        year, week_num = map(int, week_key.split('-W'))
+        monday_date = datetime.strptime(f"{year} {week_num} 1", "%G %V %u")
+        # Build date-suffixed day headers
+        day_headers = [f"{day} {(monday_date + timedelta(days=i)).strftime('%d/%m/%Y')}" for i, day in enumerate(days)]
+
         if uploaded_excel:
+            # Load existing Excel attendance
             df_existing = pd.read_excel(uploaded_excel)
-            st.write("Loaded existing attendance data:")
-            st.dataframe(df_existing)
+
+            # Extract base day names from columns (handle date suffix if present)
+            # E.g. 'Mon 01/06/2025' -> 'Mon'
+            base_days = [col.split()[0] for col in df_existing.columns[2:]]
+            
+            # Create attendance dictionary from loaded Excel data
+            attendance_dict = {}
+            for _, row in df_existing.iterrows():
+                key = (row['Surname'], row['FirstName'])
+                attendance_dict[key] = {day: row.get(col, 'A') for day, col in zip(base_days, df_existing.columns[2:])}
+
+            # Update attendance_dict with new PDF data
+            for file, _ in files:
+                attendance_for_day = process_pdf(file)
+                for (surname, first_name), (day_str, flag) in attendance_for_day.items():
+                    if day_str in days:
+                        attendance_dict.setdefault((surname, first_name), {day: 'A' for day in days})
+                        attendance_dict[(surname, first_name)][day_str] = flag
+
+            # Ensure always_include names are present
+            for name_tuple in always_include:
+                if name_tuple not in attendance_dict:
+                    attendance_dict[name_tuple] = {day: 'A' for day in days}
+
+            # Build rows for DataFrame with keys in sorted order
+            rows = []
+            for (surname, first_name), day_flags in attendance_dict.items():
+                row = [surname, first_name] + [day_flags.get(day, 'A') for day in days]
+                rows.append(row)
+
+            df_existing = pd.DataFrame(rows, columns=['Surname', 'FirstName'] + days)
+            df_existing = df_existing.sort_values(by=['Surname', 'FirstName']).reset_index(drop=True)
+
         else:
+            # No Excel uploaded, build from PDFs and always_include
             all_attendance = defaultdict(lambda: {day: 'A' for day in days})
 
             for file, _ in files:
@@ -192,16 +231,12 @@ if uploaded_pdfs:
             df_existing = pd.DataFrame(rows, columns=['Surname', 'FirstName'] + days)
             df_existing = df_existing.sort_values(by=['Surname', 'FirstName']).reset_index(drop=True)
 
-        year, week_num = map(int, week_key.split('-W'))
-        monday_date = datetime.strptime(f"{year} {week_num} 1", "%G %V %u")
-        day_headers = [f"{day} {(monday_date + timedelta(days=i)).strftime('%d/%m/%Y')}" for i, day in enumerate(days)]
-
+        # Rename day columns to include date suffixes for display & Excel output
         df_existing.columns = ['Surname', 'FirstName'] + day_headers
-        df_renamed = df_existing
 
-        st.dataframe(df_renamed)
+        st.dataframe(df_existing)
 
-        excel_bytes = style_excel(df_renamed)
+        excel_bytes = style_excel(df_existing)
         st.download_button(
             label=f"⬇️ Download updated Excel for week {week_key}",
             data=excel_bytes,
