@@ -7,7 +7,6 @@ from io import BytesIO
 from openpyxl.styles import PatternFill, Alignment
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # Constants
 days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
@@ -18,9 +17,11 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1Y8nSTQUZ5qWborDOlPxzh9K48Ls
 # --- Google Sheets functions ---
 
 def get_gsheet_client():
-    scope = ["https://spreadsheets.google.com/feeds",
-             "https://www.googleapis.com/auth/spreadsheets",
-             "https://www.googleapis.com/auth/drive"]
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
 
     creds_dict = st.secrets["google"]  # uses your Streamlit Cloud secret
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -97,13 +98,14 @@ def style_excel(df):
             ws = wb.active
 
             fill_map = {
-                'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),
-                'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),
-                'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),
+                'Y': PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid'),  # Green
+                'L': PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid'),  # Yellow
+                'A': PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid'),  # Red
+                'H': PatternFill(start_color='FFFFC0CB', end_color='FFFFC0CB', fill_type='solid'),  # Pink (LightPink)
             }
             center_align = Alignment(horizontal='center', vertical='center')
 
-            # Adjust width for day columns (starting from 3rd column)
+            # Adjust width for day columns (from column 3 to last column)
             for col_idx in range(3, ws.max_column + 1):
                 ws.column_dimensions[chr(64 + col_idx)].width = 20
 
@@ -168,49 +170,55 @@ if uploaded_pdfs:
     for week_key, files in weeks.items():
         st.subheader(f"📅 Week {week_key}")
 
-        year, week_num = map(int, week_key.split('-W'))
-        monday_date = datetime.strptime(f"{year} {week_num} 1", "%G %V %u")
-        # Build date-suffixed day headers
-        day_headers = [f"{day} {(monday_date + timedelta(days=i)).strftime('%d/%m/%Y')}" for i, day in enumerate(days)]
-
+        # Load existing Excel data if provided
         if uploaded_excel:
-            # Load existing Excel attendance
             df_existing = pd.read_excel(uploaded_excel)
+            st.write("Loaded existing attendance data:")
+            st.dataframe(df_existing)
+            # Prepare existing attendance data dict for updating
+            all_attendance = defaultdict(lambda: {day: 'A' for day in days})
 
-            # Extract base day names from columns (handle date suffix if present)
-            # E.g. 'Mon 01/06/2025' -> 'Mon'
-            base_days = [col.split()[0] for col in df_existing.columns[2:]]
-            
-            # Create attendance dictionary from loaded Excel data
-            attendance_dict = {}
+            # Map current dataframe into all_attendance dictionary
+            # Extract base day names (without dates)
+            base_days = days
+            # Columns from 3rd onwards have date suffixes, map them back to base days:
+            col_day_map = {}
+            for col in df_existing.columns[2:]:
+                # extract the day part from header like 'Mon 01/06/2025'
+                base_day = col.split(' ')[0]
+                col_day_map[col] = base_day
+
             for _, row in df_existing.iterrows():
-                key = (row['Surname'], row['FirstName'])
-                attendance_dict[key] = {day: row.get(col, 'A') for day, col in zip(base_days, df_existing.columns[2:])}
+                surname = row['Surname']
+                first_name = row['FirstName']
+                # Initialize if missing
+                if (surname, first_name) not in all_attendance:
+                    all_attendance[(surname, first_name)] = {day: 'A' for day in days}
+                for col in df_existing.columns[2:]:
+                    day = col_day_map[col]
+                    all_attendance[(surname, first_name)][day] = row[col]
 
-            # Update attendance_dict with new PDF data
+            # Update attendance from PDFs
             for file, _ in files:
                 attendance_for_day = process_pdf(file)
                 for (surname, first_name), (day_str, flag) in attendance_for_day.items():
                     if day_str in days:
-                        attendance_dict.setdefault((surname, first_name), {day: 'A' for day in days})
-                        attendance_dict[(surname, first_name)][day_str] = flag
+                        all_attendance[(surname, first_name)][day_str] = flag
 
             # Ensure always_include names are present
             for name_tuple in always_include:
-                if name_tuple not in attendance_dict:
-                    attendance_dict[name_tuple] = {day: 'A' for day in days}
+                if name_tuple not in all_attendance:
+                    all_attendance[name_tuple] = {day: 'A' for day in days}
 
-            # Build rows for DataFrame with keys in sorted order
+            # Build rows list
             rows = []
-            for (surname, first_name), day_flags in attendance_dict.items():
-                row = [surname, first_name] + [day_flags.get(day, 'A') for day in days]
+            for (surname, first_name), day_flags in all_attendance.items():
+                row = [surname, first_name] + [day_flags[day] for day in days]
                 rows.append(row)
 
             df_existing = pd.DataFrame(rows, columns=['Surname', 'FirstName'] + days)
-            df_existing = df_existing.sort_values(by=['Surname', 'FirstName']).reset_index(drop=True)
-
         else:
-            # No Excel uploaded, build from PDFs and always_include
+            # If no existing Excel, build from PDFs only
             all_attendance = defaultdict(lambda: {day: 'A' for day in days})
 
             for file, _ in files:
@@ -229,11 +237,13 @@ if uploaded_pdfs:
                 rows.append(row)
 
             df_existing = pd.DataFrame(rows, columns=['Surname', 'FirstName'] + days)
-            df_existing = df_existing.sort_values(by=['Surname', 'FirstName']).reset_index(drop=True)
-
-        # Rename day columns to include date suffixes for display & Excel output
+        
+        # Add date suffixes to days in columns
+        year, week_num = map(int, week_key.split('-W'))
+        monday_date = datetime.strptime(f"{year} {week_num} 1", "%G %V %u")
+        day_headers = [f"{day} {(monday_date + timedelta(days=i)).strftime('%d/%m/%Y')}" for i, day in enumerate(days)]
         df_existing.columns = ['Surname', 'FirstName'] + day_headers
-
+        
         st.dataframe(df_existing)
 
         excel_bytes = style_excel(df_existing)
@@ -245,3 +255,4 @@ if uploaded_pdfs:
         )
 else:
     st.info("Upload PDFs to process weekly attendance.")
+
